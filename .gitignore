@@ -6,7 +6,9 @@
 /tmp
 /node_modules
 oclif.manifest.json
-
+.env
+/drizzle
+sqlite.db
 
 
 yarn.lock
