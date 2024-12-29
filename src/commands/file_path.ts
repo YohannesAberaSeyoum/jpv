@@ -1,5 +1,5 @@
 import { Args, Command, Flags } from '@oclif/core'
-import { FilePath as JPVFilePath, filePath } from '../db/schema/jpv.js'
+import { JpvFilePath , jpvFilePath } from '../db/schema/jpv.js'
 import { input, select, search, confirm } from '@inquirer/prompts'
 import { db } from '../db/setup.js'
 import { eq, ilike } from 'drizzle-orm'
@@ -30,11 +30,11 @@ export default class FilePath extends Command {
 
   timeOut: NodeJS.Timeout | undefined = undefined
   searchFilePath = async (
-    input: string,
+    input: string = "",
     optional?: boolean,
   ): Promise<{
     name: string
-    value: JPVFilePath
+    value: JpvFilePath
   }[]
   > => {
     return new Promise((resolve, reject) => {
@@ -44,11 +44,11 @@ export default class FilePath extends Command {
         try {
           const result = await db
             .select()
-            .from(filePath)
-            .where(ilike(filePath.name, `%${input}%`))
+            .from(jpvFilePath)
+            .where(ilike(jpvFilePath.name, `%${input}%`))
           const pathes = result.map((res) => ({ name: `${res.name}(${res.pathUrl})`, value: res }))
           if(optional){
-            const jpvF: JPVFilePath = {
+            const jpvF: JpvFilePath = {
               name: `Create -> ${input}`,
               description: '',
               createdAt: null,
@@ -69,19 +69,18 @@ export default class FilePath extends Command {
   }
 
   deleteFilePath = async (args?: FilePathArgs) => {
-    let deleteFilePath: JPVFilePath
+    let deleteFilePath: JpvFilePath
     if (args?.pathUrl) {
-      const jpvFilePath = await db.select().from(filePath).where(eq(filePath.pathUrl, args.pathUrl))
-      if (!jpvFilePath.length) {
+      const jpvFileP = await db.select().from(jpvFilePath).where(eq(jpvFilePath.pathUrl, args.pathUrl))
+      if (!jpvFileP.length) {
         this.log(chalk.red('Their is no FilePath with this pathUrl'))
         this.exit(1)
       }
-      deleteFilePath = jpvFilePath[0]
+      deleteFilePath = jpvFileP[0]
     } else {
       deleteFilePath = await search({
         message: 'Search FilePath',
         source: async (input) => {
-          if (!input) return []
           return this.searchFilePath(input)
         },
       })
@@ -91,7 +90,7 @@ export default class FilePath extends Command {
       default: false,
     })
     if (deleteConfirmation) {
-      await db.delete(filePath).where(eq(filePath.id, deleteFilePath.id))
+      await db.delete(jpvFilePath).where(eq(jpvFilePath.id, deleteFilePath.id))
     }
     const continueConfirmation = await confirm({
       message: 'Do you want to delete more',
@@ -103,25 +102,24 @@ export default class FilePath extends Command {
   }
 
   updateFilePath = async (args?: FilePathArgs) => {
-    let updateFilePath: JPVFilePath
+    let updateFilePath: JpvFilePath
     if (args?.pathUrl) {
-      const jpvFilePath = await db.select().from(filePath).where(eq(filePath.pathUrl, args.pathUrl))
-      if (!jpvFilePath.length) {
+      const jpvFileP = await db.select().from(jpvFilePath).where(eq(jpvFilePath.pathUrl, args.pathUrl))
+      if (!jpvFileP.length) {
         this.log(chalk.red('Their is no FilePath with this pathUrl'))
         this.exit(1)
       }
-      updateFilePath = jpvFilePath[0]
+      updateFilePath = jpvFileP[0]
     } else {
       updateFilePath = await search({
         message: 'Search FilePath',
         source: async (input) => {
-          if (!input) return []
           return this.searchFilePath(input)
         },
       })
     }
     const ch = await this.filePathForm(updateFilePath)
-    await db.update(filePath).set(ch).where(eq(filePath.id, updateFilePath.id))
+    await db.update(jpvFilePath).set(ch).where(eq(jpvFilePath.id, updateFilePath.id))
     const continueConfirmation = await confirm({
       message: 'Do you want to update more',
       default: true,
@@ -131,7 +129,7 @@ export default class FilePath extends Command {
     }
   }
 
-  filePathForm = async (filePath: JPVFilePath = {} as JPVFilePath) => {
+  filePathForm = async (filePath: JpvFilePath = {} as JpvFilePath) => {
 
     const pathUrl = await input({
       message: 'File Path',
@@ -157,11 +155,11 @@ export default class FilePath extends Command {
   }
 
   addFilePath = async (args?: FilePathArgs) => {
-    let jpvFilePath: JPVFilePath = { pathUrl: args?.pathUrl || "" } as JPVFilePath;
-    const form = await this.filePathForm(jpvFilePath)
-    await db.insert(filePath).values({ ...form })
+    let jpvFileP: JpvFilePath = { pathUrl: args?.pathUrl || "" } as JpvFilePath;
+    const form = await this.filePathForm(jpvFileP)
+    await db.insert(jpvFilePath).values({ ...form })
     const continueConfirmation = await confirm({
-      message: 'Do you want to add more',
+      message: 'Do you want to add more file path',
       default: true,
     })
     if (continueConfirmation) {

@@ -1,5 +1,5 @@
 import { Args, Command, Flags } from '@oclif/core'
-import { filePath, Video as JPVVideo, link, video, videoTypeEnum } from '../db/schema/jpv.js'
+import { jpvFilePath, JpvVideo, jpvLink, jpvVideo, videoTypeEnum } from '../db/schema/jpv.js'
 import { input, select, search, confirm } from '@inquirer/prompts'
 import { db } from '../db/setup.js'
 import { eq, ExtractTablesWithRelations } from 'drizzle-orm'
@@ -7,14 +7,23 @@ import chalk from 'chalk'
 import * as fs from 'fs';
 import Link from './link.js'
 import FilePath from './file_path.js'
-import { Link as JPVLink } from '../db/schema/jpv.js'
-import { FilePath as JPVFilePath } from '../db/schema/jpv.js'
+import { JpvLink } from '../db/schema/jpv.js'
+import { JpvFilePath } from '../db/schema/jpv.js'
 import { PgTransaction } from 'drizzle-orm/pg-core'
 import { NodePgQueryResultHKT } from 'drizzle-orm/node-postgres'
+import _ from 'lodash'
+import { Video as YoutubeVideo } from 'youtube-sr'
+import ffmpeg from 'fluent-ffmpeg';
 
 
 interface VideoArgs {
-  path?: string
+  link?: string
+}
+
+interface FileVideoArgs {
+  file_path?: string
+  description?: string
+  title?: string
 }
 
 export type Transaction = PgTransaction<NodePgQueryResultHKT, typeof import("../db/schema/jpv.js"), ExtractTablesWithRelations<typeof import("../db/schema/jpv.js")>>
@@ -25,7 +34,7 @@ export default class Video extends Command {
 
 
   static override args = {
-    path: Args.string({ description: 'It is Unique Path' }),
+    link: Args.string({ description: 'It is Unique Link/Path' }),
   }
 
   static override description = 'Manage JPV Videos'
@@ -49,7 +58,7 @@ export default class Video extends Command {
     input: string = "",
   ): Promise<{
     name: string
-    value: JPVVideo
+    value: JpvVideo
   }[]
   > => {
     return new Promise((resolve, reject) => {
@@ -57,15 +66,15 @@ export default class Video extends Command {
 
       this.timeOut = setTimeout(async () => {
         try {
-          const result = await db.query.video.findMany(
+          const result = await db.query.jpvVideo.findMany(
             {
               with: {
-            filePath: true,
-            link: true
-          }
-          , where: (video, {ilike}) => ilike(video.name, `%${input}%`)
-        }
-        )
+                filePath: true,
+                link: true
+              }
+              , where: (jpvVideo, { ilike }) => ilike(jpvVideo.name, `%${input}%`)
+            }
+          )
           resolve(result.map((res) => ({ name: `${res.name}`, value: res })))
         } catch (error) {
           console.log(error)
@@ -86,13 +95,13 @@ export default class Video extends Command {
   getVideoFromPath = async (path: string) => {
     let jpvVideo;
     if (this.isFilePath(path)) {
-      jpvVideo = await db.query.video.findFirst({where: (video, {eq}) => eq(filePath.pathUrl, path)})
+      jpvVideo = await db.query.jpvVideo.findFirst({ where: (jpvVideo, { eq }) => eq(jpvFilePath.pathUrl, path) })
       if (!jpvVideo) {
         this.log(chalk.red('Their is no Video with this url'))
         this.exit(1)
       }
     } else {
-      jpvVideo = await db.query.video.findFirst({where: (video, {eq}) => eq(link.url, path)})
+      jpvVideo = await db.query.jpvVideo.findFirst({ where: (jpvVideo, { eq }) => eq(jpvLink.url, path) })
       if (!jpvVideo) {
         this.log(chalk.red('Their is no Video with this url'))
         this.exit(1)
@@ -102,14 +111,13 @@ export default class Video extends Command {
   }
 
   deleteVideo = async (args?: VideoArgs) => {
-    let deleteVideo: JPVVideo
-    if (args?.path) {
-      deleteVideo = await this.getVideoFromPath(args.path)
+    let deleteVideo: JpvVideo
+    if (args?.link) {
+      deleteVideo = await this.getVideoFromPath(args.link)
     } else {
       deleteVideo = await search({
         message: 'Search Video',
         source: async (input) => {
-          if (!input) return []
           return this.searchVideo(input)
         },
       })
@@ -119,7 +127,7 @@ export default class Video extends Command {
       default: false,
     })
     if (deleteConfirmation) {
-      await db.delete(video).where(eq(video.id, deleteVideo.id))
+      await db.delete(jpvVideo).where(eq(jpvVideo.id, deleteVideo.id))
     }
     const continueConfirmation = await confirm({
       message: 'Do you want to delete more',
@@ -131,9 +139,9 @@ export default class Video extends Command {
   }
 
   updateVideo = async (args?: VideoArgs) => {
-    let updateVideo: JPVVideo
-    if (args?.path) {
-      updateVideo = await this.getVideoFromPath(args.path)
+    let updateVideo: JpvVideo
+    if (args?.link) {
+      updateVideo = await this.getVideoFromPath(args.link)
     } else {
       updateVideo = await search({
         message: 'Search Video',
@@ -144,7 +152,7 @@ export default class Video extends Command {
     }
     await db.transaction(async (tx) => {
       const ch = await this.videoForm(tx, updateVideo)
-      await db.update(video).set(ch).where(eq(video.id, updateVideo.id))
+      await db.update(jpvVideo).set(ch).where(eq(jpvVideo.id, updateVideo.id))
     })
     const continueConfirmation = await confirm({
       message: 'Do you want to update more',
@@ -155,8 +163,8 @@ export default class Video extends Command {
     }
   }
 
-  videoForm = async (tx: Transaction, video: JPVVideo = {} as JPVVideo) => {
-    let videoLink: JPVLink | undefined, videoPath: JPVFilePath | undefined;
+  videoForm = async (tx?: Transaction, video: JpvVideo = {} as JpvVideo) => {
+    let videoLink: JpvLink | undefined, videoPath: JpvFilePath | undefined;
 
     const video_type = await select({
       message: 'Video Type',
@@ -167,7 +175,6 @@ export default class Video extends Command {
       videoLink = await search({
         message: 'Link of Video',
         source: async (input) => {
-          if (!input) return []
           return this.link.searchLink(input, true)
         },
       })
@@ -175,7 +182,6 @@ export default class Video extends Command {
       videoPath = await search({
         message: 'Path of Video',
         source: async (input) => {
-          if (!input) return []
           return this.filePath.searchFilePath(input, true)
         },
       })
@@ -191,15 +197,19 @@ export default class Video extends Command {
       default: video.description || '',
     })
 
-    if (video_type == videoTypeEnum.enumValues[0]) {
+    if (tx != null &&video_type == videoTypeEnum.enumValues[0]) {
       if (videoLink?.id == -1) {
-        const createdLink = await tx.insert(link).values({ name: name, description: description, url: videoLink.url }).returning()
+        const createdLink = await tx.insert(jpvLink).values({ name: name, description: description, url: videoLink.url }).returning()
         videoLink = createdLink[0]
       }
-    } else {
+    } else if(tx != null) {
       if (videoPath?.id == -1) {
-        const createdpath = await tx.insert(filePath).values({ name: name, description: description, pathUrl: videoPath.pathUrl }).returning()
+        const createdpath = await tx.insert(jpvFilePath).values({ name: name, description: description, pathUrl: videoPath.pathUrl }).returning()
         videoPath = createdpath[0]
+        const duration = await this.getVideoDuration(videoPath.pathUrl)
+        if(duration){
+          video.duration = `${duration}`
+        }
       }
     }
 
@@ -211,20 +221,62 @@ export default class Video extends Command {
     return video
   }
 
-  addVideo = async (args?: VideoArgs) => {
-    let jpvVideo: JPVVideo = {} as JPVVideo;
-    await db.transaction(async (tx) => {
-      const form = await this.videoForm(tx, jpvVideo)
-      await tx.insert(video).values({ ...form })
-    })
-    const continueConfirmation = await confirm({
-      message: 'Do you want to add more',
-      default: true,
-    })
+  getVideoDuration = (filePath: string) => {
+    return new Promise<number | undefined>((resolve, reject) => {
+        ffmpeg.ffprobe(filePath, (err, metadata) => {
+            if (err) {
+                reject(err);
+            } else {
+                const duration = metadata.format.duration; // duration in seconds
+                resolve(duration);
+            }
+        });
+    });
+}
 
-    if (continueConfirmation) {
-      await this.addVideo()
+  addVideo = async (args?: YoutubeVideo | VideoArgs | FileVideoArgs, tx?: Transaction, handleMultiple: boolean = true) => {
+    const dx = tx || db;
+    let jpvV: JpvVideo = {} as JpvVideo;
+    let form: JpvVideo;
+    if (args && 'url' in args) {
+      form = args as any;
+      form.name = args.title!
+      let createdLink = await dx.insert(jpvLink).values({ name: args.title!, description: args.description, url: args.url }).onConflictDoNothing().returning()
+      if(!createdLink[0]){
+        createdLink = await dx.query.jpvLink.findMany({where: eq(jpvLink.url, args.url!)});
+      }
+      form.link = createdLink[0].id
+      form.videoType = 'link'
+    } else if(args && 'file_path' in args){
+      form = args as any;
+      form.name = args.title!
+      let createdPath = await dx.insert(jpvFilePath).values({ name: args.title!, description: args.description, pathUrl: args.file_path! }).onConflictDoNothing().returning()
+      if(!createdPath[0]){
+        createdPath = await dx.query.jpvFilePath.findMany({where: eq(jpvFilePath.pathUrl, args.file_path!)});
+      }
+      form.filePath = createdPath[0].id
+      form.videoType = 'local'
+    } else {
+      form = await this.videoForm(tx, jpvV)
     }
+    let videos = await dx.insert(jpvVideo).values({ ...form }).onConflictDoUpdate({
+      set: {duration: form.duration},
+      target: jpvVideo.filePath
+    }).returning()
+    if(!videos[0]){
+      videos = await dx.query.jpvVideo.findMany({where: eq(jpvVideo.name, form.name!)});
+    }
+    if(handleMultiple){
+      const continueConfirmation = await confirm({
+        message: 'Do you want to add more videos',
+        default: true,
+      })
+  
+      if (continueConfirmation) {
+        await this.addVideo()
+      }
+    }
+    return videos
   }
 
   public async manageVideo() {

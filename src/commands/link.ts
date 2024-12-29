@@ -1,5 +1,5 @@
 import { Args, Command, Flags } from '@oclif/core'
-import { Link as JPVLink, link } from '../db/schema/jpv.js'
+import { JpvLink, jpvLink } from '../db/schema/jpv.js'
 import { input, select, search, confirm } from '@inquirer/prompts'
 import { db } from '../db/setup.js'
 import { eq, ilike } from 'drizzle-orm'
@@ -30,11 +30,11 @@ export default class Link extends Command {
   timeOut: NodeJS.Timeout | undefined = undefined
 
   searchLink = async (
-    input: string,
+    input: string = "",
     optional?: boolean,
   ): Promise<{
     name: string
-    value: JPVLink
+    value: JpvLink
   }[]
   > => {
     return new Promise((resolve, reject) => {
@@ -44,11 +44,11 @@ export default class Link extends Command {
         try {
           const result = await db
             .select()
-            .from(link)
-            .where(ilike(link.name, `%${input}%`))
+            .from(jpvLink)
+            .where(ilike(jpvLink.name, `%${input}%`))
           const links = result.map((res) => ({ name: `${res.name}(${res.url})`, value: res }))
           if(optional){
-            const jpvL: JPVLink = {
+            const jpvL: JpvLink = {
               name: `Create -> ${input}`,
               description: '',
               createdAt: null,
@@ -67,19 +67,18 @@ export default class Link extends Command {
   }
 
   deleteLink = async (args?: LinkArgs) => {
-    let deleteLink: JPVLink
+    let deleteLink: JpvLink
     if (args?.url) {
-      const jpvLink = await db.select().from(link).where(eq(link.url, args.url))
-      if (!jpvLink.length) {
+      const jpvL = await db.select().from(jpvLink).where(eq(jpvLink.url, args.url))
+      if (!jpvL.length) {
         this.log(chalk.red('Their is no Link with this url'))
         this.exit(1)
       }
-      deleteLink = jpvLink[0]
+      deleteLink = jpvL[0]
     } else {
       deleteLink = await search({
         message: 'Search Link',
         source: async (input) => {
-          if (!input) return []
           return this.searchLink(input)
         },
       })
@@ -89,7 +88,7 @@ export default class Link extends Command {
       default: false,
     })
     if (deleteConfirmation) {
-      await db.delete(link).where(eq(link.id, deleteLink.id))
+      await db.delete(jpvLink).where(eq(jpvLink.id, deleteLink.id))
     }
     const continueConfirmation = await confirm({
       message: 'Do you want to delete more',
@@ -101,25 +100,24 @@ export default class Link extends Command {
   }
 
   updateLink = async (args?: LinkArgs) => {
-    let updateLink: JPVLink
+    let updateLink: JpvLink
     if (args?.url) {
-      const jpvLink = await db.select().from(link).where(eq(link.url, args.url))
-      if (!jpvLink.length) {
+      const jpvL = await db.select().from(jpvLink).where(eq(jpvLink.url, args.url))
+      if (!jpvL.length) {
         this.log(chalk.red('Their is no Link with this url'))
         this.exit(1)
       }
-      updateLink = jpvLink[0]
+      updateLink = jpvL[0]
     } else {
       updateLink = await search({
         message: 'Search Link',
         source: async (input) => {
-          if (!input) return []
           return this.searchLink(input)
         },
       })
     }
     const ch = await this.linkForm(updateLink)
-    await db.update(link).set(ch).where(eq(link.id, updateLink.id))
+    await db.update(jpvLink).set(ch).where(eq(jpvLink.id, updateLink.id))
     const continueConfirmation = await confirm({
       message: 'Do you want to update more',
       default: true,
@@ -129,7 +127,7 @@ export default class Link extends Command {
     }
   }
 
-  linkForm = async (link: JPVLink = {} as JPVLink) => {
+  linkForm = async (link: JpvLink = {} as JpvLink) => {
 
     const url = await input({
       message: 'URL',
@@ -152,11 +150,11 @@ export default class Link extends Command {
   }
 
   addLink = async (args?: LinkArgs) => {
-    let jpvLink: JPVLink = { url: args?.url || "" } as JPVLink;
-    const form = await this.linkForm(jpvLink)
-    await db.insert(link).values({ ...form })
+    let jpvL: JpvLink = { url: args?.url || "" } as JpvLink;
+    const form = await this.linkForm(jpvL)
+    await db.insert(jpvLink).values({ ...form })
     const continueConfirmation = await confirm({
-      message: 'Do you want to add more',
+      message: 'Do you want to add more links',
       default: true,
     })
     if (continueConfirmation) {

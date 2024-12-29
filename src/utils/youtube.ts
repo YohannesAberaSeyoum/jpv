@@ -3,7 +3,7 @@ import { Channel, Playlist, Video, YouTube } from "youtube-sr";
 
 let timeOut: NodeJS.Timeout | undefined = undefined;
 
-export const searchYoutube = (input: string, type: string): Promise<{name: string, value: (Channel | Playlist | Video | undefined)}[]> => {
+export const searchYoutube = (input: string = "", type: string): Promise<{name: string, value: (Channel | Playlist | Video | undefined)}[]> => {
     return new Promise((resolve, reject) => {
         clearTimeout(timeOut)
 

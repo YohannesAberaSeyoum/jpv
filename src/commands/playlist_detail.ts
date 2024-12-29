@@ -1,12 +1,17 @@
 import { Args, Command, Flags } from '@oclif/core'
-import { PlaylistDetail as JPVPlaylistDetail, playlistDetail, playlistDetailTypeEnum, Video as JPVVideo } from '../db/schema/jpv.js'
+import { JpvPlaylistDetail, jpvPlaylistDetail, playlistDetailTypeEnum, JpvVideo, jpvPlaylist } from '../db/schema/jpv.js'
 import { input, select, search, confirm } from '@inquirer/prompts'
 import { db } from '../db/setup.js'
-import { eq, ilike } from 'drizzle-orm'
-import Video from './video.js'
+import { and, eq, ilike } from 'drizzle-orm'
+import Video, { Transaction } from './video.js'
+import { Video as YoutubeVideo } from 'youtube-sr'
 
 interface PlaylistDetailArgs {
   // pathUrl?: string
+  playlist_type?: 'video' | 'playlist' | 'channel',
+  video?: YoutubeVideo
+  playlist_id?: number
+  order?: number
 }
 
 export default class PlaylistDetail extends Command {
@@ -30,11 +35,11 @@ export default class PlaylistDetail extends Command {
   video = new Video(this.argv, this.config);
   timeOut: NodeJS.Timeout | undefined = undefined
   searchPlaylistDetail = async (
-    input: string,
+    input: string = "",
     optional?: boolean,
   ): Promise<{
     name: string
-    value: JPVPlaylistDetail
+    value: JpvPlaylistDetail
   }[]
   > => {
     return new Promise((resolve, reject) => {
@@ -44,18 +49,13 @@ export default class PlaylistDetail extends Command {
         try {
           const result = await db
             .select()
-            .from(playlistDetail)
-            .where(ilike(playlistDetail.video, `%${input}%`))
+            .from(jpvPlaylistDetail)
+            .where(ilike(jpvPlaylistDetail.video, `%${input}%`))
           const pathes = result.map((res) => ({ name: `${res.video}(${res.video})`, value: res }))
           if (optional) {
-            const jpvF: JPVPlaylistDetail = {
-              createdAt: null,
-              updatedAt: null,
-              id: -1,
-              video: -1,
-              playlist: -1,
+            const jpvF: JpvPlaylistDetail = {
               playlistDetailType: 'video'
-            }
+            } as JpvPlaylistDetail
             pathes.push({ name: "", value: jpvF })
           }
           resolve(pathes)
@@ -67,7 +67,7 @@ export default class PlaylistDetail extends Command {
   }
 
   deletePlaylistDetail = async (args?: PlaylistDetailArgs) => {
-    let deletePlaylistDetail: JPVPlaylistDetail
+    let deletePlaylistDetail: JpvPlaylistDetail
     // if (args?.pathUrl) {
     //   const jpvPlaylistDetail = await db.select().from(playlistDetail).where(eq(playlistDetail., args.pathUrl))
     //   if (!jpvPlaylistDetail.length) {
@@ -79,7 +79,6 @@ export default class PlaylistDetail extends Command {
     deletePlaylistDetail = await search({
       message: 'Search PlaylistDetail',
       source: async (input) => {
-        if (!input) return []
         return this.searchPlaylistDetail(input)
       },
     })
@@ -89,7 +88,7 @@ export default class PlaylistDetail extends Command {
       default: false,
     })
     if (deleteConfirmation) {
-      await db.delete(playlistDetail).where(eq(playlistDetail.id, deletePlaylistDetail.id))
+      await db.delete(jpvPlaylistDetail).where(eq(jpvPlaylistDetail.id, deletePlaylistDetail.id))
     }
     const continueConfirmation = await confirm({
       message: 'Do you want to delete more',
@@ -101,7 +100,7 @@ export default class PlaylistDetail extends Command {
   }
 
   updatePlaylistDetail = async (args?: PlaylistDetailArgs) => {
-    let updatePlaylistDetail: JPVPlaylistDetail
+    let updatePlaylistDetail: JpvPlaylistDetail
     // if (args?.pathUrl) {
     //   const jpvPlaylistDetail = await db.select().from(playlistDetail).where(eq(playlistDetail.pathUrl, args.pathUrl))
     //   if (!jpvPlaylistDetail.length) {
@@ -113,13 +112,12 @@ export default class PlaylistDetail extends Command {
     updatePlaylistDetail = await search({
       message: 'Search PlaylistDetail',
       source: async (input) => {
-        if (!input) return []
         return this.searchPlaylistDetail(input)
       },
     })
     // }
     const ch = await this.playlistDetailForm(updatePlaylistDetail)
-    await db.update(playlistDetail).set(ch).where(eq(playlistDetail.id, updatePlaylistDetail.id))
+    await db.update(jpvPlaylistDetail).set(ch).where(eq(jpvPlaylistDetail.id, updatePlaylistDetail.id))
     const continueConfirmation = await confirm({
       message: 'Do you want to update more',
       default: true,
@@ -130,9 +128,9 @@ export default class PlaylistDetail extends Command {
   }
 
 
-  playlistDetailForm = async (playlistDetail: JPVPlaylistDetail = {} as JPVPlaylistDetail) => {
+  playlistDetailForm = async (playlistDetail: JpvPlaylistDetail = {} as JpvPlaylistDetail) => {
 
-    let video: JPVVideo | undefined;
+    let video: JpvVideo | undefined;
     const playlist_detail_type = await select({
       message: 'Playlist Detail Type',
       choices: playlistDetailTypeEnum.enumValues,
@@ -142,7 +140,6 @@ export default class PlaylistDetail extends Command {
       video = await search({
         message: 'Link of Video',
         source: async (input) => {
-          if (!input) return []
           return this.video.searchVideo(input)
         },
       })
@@ -154,17 +151,35 @@ export default class PlaylistDetail extends Command {
     return playlistDetail
   }
 
-  addPlaylistDetail = async (args?: PlaylistDetailArgs) => {
-    let jpvPlaylistDetail: JPVPlaylistDetail = {} as JPVPlaylistDetail;
-    const form = await this.playlistDetailForm(jpvPlaylistDetail)
-    await db.insert(playlistDetail).values({ ...form })
-    const continueConfirmation = await confirm({
-      message: 'Do you want to add more',
-      default: true,
-    })
-    if (continueConfirmation) {
-      await this.addPlaylistDetail()
+  addPlaylistDetail = async (args?: PlaylistDetailArgs | JpvPlaylistDetail, tx?: Transaction, handleMultiple: boolean = true) => {
+    let jpvPlaylistD: JpvPlaylistDetail = args as JpvPlaylistDetail;
+    let form: JpvPlaylistDetail = {} as JpvPlaylistDetail;
+    if (args && 'playlist_type' in args) {
+      if (args.playlist_type == 'video') {
+        console.log(args.video)
+        const videos = await this.video.addVideo(args.video, tx, handleMultiple)
+        form.playlistDetailType = 'video'
+        form.playlist = args.playlist_id || -1
+        form.order = BigInt(args.order || -1)
+        form.video = videos[0].id
+      }
+    } else {
+      form = await this.playlistDetailForm(jpvPlaylistD)
     }
+    let details = await db.insert(jpvPlaylistDetail).values({ ...form }).onConflictDoNothing().returning()
+    if(!details[0]){
+      details = await db.query.jpvPlaylistDetail.findMany({where:  and(eq(jpvPlaylistDetail.playlist, form.playlist!), eq(jpvPlaylistDetail.video, form.video!))});
+    }
+    if (handleMultiple) {
+      const continueConfirmation = await confirm({
+        message: 'Do you want to add more details',
+        default: true,
+      })
+      if (continueConfirmation) {
+        await this.addPlaylistDetail()
+      }
+    }
+    return details;
   }
 
   public async managePlaylistDetail() {

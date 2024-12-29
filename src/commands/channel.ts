@@ -1,12 +1,13 @@
-import {Args, Command, Flags} from '@oclif/core'
-import {input, select, search, confirm} from '@inquirer/prompts'
-import {searchYoutube} from '../utils/youtube.js'
-import {db} from '../db/setup.js'
+import { Args, Command, Flags } from '@oclif/core'
+import { input, select, search, confirm } from '@inquirer/prompts'
+import { searchYoutube } from '../utils/youtube.js'
+import { db } from '../db/setup.js'
 import chalk from 'chalk'
-import {channel} from '../db/schema/jpv.js'
-import {eq, ilike} from 'drizzle-orm'
-import {Channel as JPVChannel} from '../db/schema/jpv.js'
+import { JpvChannel, jpvLink, JpvLink, jpvVideo, jpvChannel, channelTypeEnum } from '../db/schema/jpv.js'
+import { eq, ilike } from 'drizzle-orm'
 import YouTube from 'youtube-sr'
+import Video, { Transaction } from './video.js'
+import { Channel as YoutubeChannel } from 'youtube-sr'
 
 interface ChannelArgs {
   channelname?: string
@@ -14,7 +15,7 @@ interface ChannelArgs {
 
 export default class Channel extends Command {
   static override args = {
-    channelname: Args.string({description: 'It is Unique Channel channelname'}),
+    channelname: Args.string({ description: 'It is Unique Channel channelname' }),
   }
 
   static override description = 'Manage JPV Channels'
@@ -22,21 +23,24 @@ export default class Channel extends Command {
   static override examples = ['<%= config.bin %> <%= command.id %>']
 
   static override flags = {
-    add: Flags.boolean({char: 'a', description: 'To Add New Channel'}),
-    delete: Flags.boolean({char: 'd', description: 'To Delete Existing Channel'}),
-    manage: Flags.boolean({char: 'm', description: 'To Manage Channel'}),
-    update: Flags.boolean({char: 'u', description: 'To Update Existing Channel'}),
+    add: Flags.boolean({ char: 'a', description: 'To Add New Channel' }),
+    delete: Flags.boolean({ char: 'd', description: 'To Delete Existing Channel' }),
+    manage: Flags.boolean({ char: 'm', description: 'To Manage Channel' }),
+    update: Flags.boolean({ char: 'u', description: 'To Update Existing Channel' }),
+    videos: Flags.boolean({ char: 'v', description: 'To Add Videos' }),
   }
+
+  video = new Video(this.argv, this.config);
 
   timeOut: NodeJS.Timeout | undefined = undefined
   searchChannel = (
-    input: string,
-  ): Promise<
-    {
+    input: string = "",
+    create_new: boolean = false
+  ):
+    Promise<{
       name: string
-      value: JPVChannel
-    }[]
-  > => {
+      value: JpvChannel
+    }[]> => {
     return new Promise((resolve, reject) => {
       clearTimeout(this.timeOut)
 
@@ -44,9 +48,16 @@ export default class Channel extends Command {
         try {
           const result = await db
             .select()
-            .from(channel)
-            .where(ilike(channel.name, `%${input}%`))
-          resolve(result.map((res) => ({name: res.name, value: res})))
+            .from(jpvChannel)
+            .where(ilike(jpvChannel.name, `%${input}%`))
+          const channels = result.map((res) => ({ name: res.name, value: res }))
+          if (create_new) {
+            const jpvL: JpvChannel = {
+              name: `Create -> ${input}`,
+            } as JpvChannel
+            channels.push({ name: jpvL.name, value: jpvL })
+          }
+          resolve(channels)
         } catch (error) {
           resolve([])
         }
@@ -58,11 +69,10 @@ export default class Channel extends Command {
     const youtubeChannel = await search({
       message: 'Search Channel',
       source: async (input) => {
-        if (!input) return []
         return this.searchChannel(input)
       },
     })
-    await db.delete(channel).where(eq(channel.id, youtubeChannel.id))
+    await db.delete(jpvChannel).where(eq(jpvChannel.id, youtubeChannel.id))
     const continueConfirmation = await confirm({
       message: 'Do you want to delete more',
       default: true,
@@ -72,26 +82,51 @@ export default class Channel extends Command {
     }
   }
 
+  delay(ms: number) {
+    return new Promise<void>((resolve) => setTimeout(resolve, ms));
+  }
+
+  addVideos = async (channel_id?: string) => {
+    if (!channel_id) {
+      const youtube = await search({
+        message: 'Search Channel',
+        source: async (input) => {
+          return this.searchChannel(input)
+        },
+      })
+      channel_id = youtube.targetId!
+    }
+    const videos = await YouTube.YouTube.getChannelVideos(channel_id)
+    await db.transaction(async (tx) => {
+      await Promise.all(videos.map(async (vid) => {
+        let createdLink = await tx.query.jpvLink.findMany({ where: eq(jpvLink.url, vid.url) })
+        if (!createdLink.length) {
+          createdLink = await tx.insert(jpvLink).values({ name: vid.title!, description: vid.description, url: vid.url }).returning()
+        }
+        await tx.insert(jpvVideo).values({ ...vid, id: undefined, link: createdLink[0].id, name: vid.title } as any)
+      }));
+    })
+  }
+
   updateChannel = async (args?: ChannelArgs) => {
-    let youtubeChannel: JPVChannel
+    let youtubeChannel: JpvChannel
     if (args?.channelname) {
-      const jpvChannel = await db.select().from(channel).where(eq(channel.channelname, args.channelname))
-      if (!jpvChannel.length) {
+      const jpvC = await db.select().from(jpvChannel).where(eq(jpvChannel.channelname, args.channelname))
+      if (!jpvC.length) {
         this.log(chalk.red('Their is no Channel with this channelname'))
         this.exit(1)
       }
-      youtubeChannel = jpvChannel[0]
+      youtubeChannel = jpvC[0]
     } else {
       youtubeChannel = await search({
         message: 'Search Channel',
         source: async (input) => {
-          if (!input) return []
           return this.searchChannel(input)
         },
       })
     }
     const ch = await this.channelForm(youtubeChannel)
-    await db.update(channel).set(ch).where(eq(channel.id, youtubeChannel.id))
+    await db.update(jpvChannel).set(ch).where(eq(jpvChannel.id, youtubeChannel.id))
     const continueConfirmation = await confirm({
       message: 'Do you want to update more',
       default: true,
@@ -101,7 +136,62 @@ export default class Channel extends Command {
     }
   }
 
-  channelForm = async (channel: JPVChannel = {} as JPVChannel) => {
+  getOrInsertChannel = async (tx?: Transaction) => {
+    let channel = await search({
+      message: 'Channel of Playlist',
+      source: async (input) => {
+        return this.searchChannel(input, true)
+      },
+    })
+
+    if (!channel.id) {
+      const channels = await this.addChannel(channel, tx)
+      channel = channels[0]
+    }
+    return channel;
+  }
+
+  channelForm = async (channel: JpvChannel = {} as JpvChannel, tx?: Transaction) => {
+    if (!channel.channelname) {
+      const channel_type = await select({
+        message: 'Select Channel Type',
+        choices: channelTypeEnum.enumValues,
+      })
+      channel.channelType = channel_type as any;
+      if (channel_type == 'youtube') {
+        const youtubeChannel = await search({
+          message: 'Search Youtube',
+          source: async (input) => {
+            return searchYoutube(input, 'channel')
+          },
+        }) as YoutubeChannel
+
+        channel.name = youtubeChannel.name || ""
+        channel.description = youtubeChannel.description || ""
+        channel.verified = youtubeChannel.verified
+        channel.targetId = youtubeChannel.id || ""
+        if (tx) {
+          let link = await tx.insert(jpvLink).values({ name: channel.name, url: youtubeChannel.url } as JpvLink).onConflictDoNothing().returning()
+          if(!link[0]){
+            link = await tx.query.jpvLink.findMany({where: eq(jpvLink.url, youtubeChannel.url!)});
+          }
+          channel.url = link[0].id
+          let iconLink = await tx.insert(jpvLink).values({ name: channel.name, url: youtubeChannel.icon.url } as JpvLink).onConflictDoNothing().returning()
+          if(!iconLink[0]){
+            iconLink = await tx.query.jpvLink.findMany({where: eq(jpvLink.url, youtubeChannel.icon.url!)});
+          }
+          channel.iconURL = iconLink[0].id
+        }
+      }
+
+      if (channel_type == "local") {
+        const channel_name = await input({
+          message: 'Channel Name'
+        })
+        channel.channelname = channel_name
+      }
+    }
+
     const name = await input({
       message: 'Title of Channel',
       default: channel.name,
@@ -116,41 +206,43 @@ export default class Channel extends Command {
     return channel
   }
 
-  addChannel = async (args?: ChannelArgs) => {
-    let youtubeChannel
+  addChannel = async (args?: ChannelArgs, tx?: Transaction, handleMultiple: boolean = true) => {
+    let dx = tx || db
+    let channel: JpvChannel = {} as JpvChannel
     if (args?.channelname) {
-      youtubeChannel = await YouTube.YouTube.getChannel(args.channelname)
-    } else {
-      const channel_type = await select({
-        message: 'Select Channel Type',
-        choices: ['Youtube', 'Local'] as const,
+      const youtubeChannel = await YouTube.YouTube.getChannel(args.channelname);
+      channel.name = youtubeChannel.name || ""
+      channel.description = youtubeChannel.description || ""
+      channel.verified = youtubeChannel.verified
+      channel.targetId = youtubeChannel.id || ""
+      if (tx) {
+        let link = await tx.insert(jpvLink).values({ name: channel.name, url: youtubeChannel.url } as JpvLink).onConflictDoNothing().returning()
+        if(!link[0]){
+          link = await tx.query.jpvLink.findMany({where: eq(jpvLink.url, youtubeChannel.url!)});
+        }
+        channel.url = link[0].id
+        let iconLink = await tx.insert(jpvLink).values({ name: channel.name, url: youtubeChannel.icon.url } as JpvLink).onConflictDoNothing().returning()
+        if(!iconLink[0]){
+          iconLink = await tx.query.jpvLink.findMany({where: eq(jpvLink.url, youtubeChannel.icon.url!)});
+        }
+        channel.iconURL = iconLink[0].id
+      }
+    }
+    const ch = await this.channelForm(channel, tx)
+    let channels = await dx.insert(jpvChannel).values({ ...ch }).onConflictDoNothing().returning()
+    if(!channels[0]){
+      channels = await dx.query.jpvChannel.findMany({where: eq(jpvChannel.channelname, ch.channelname!)});
+    }
+    if (handleMultiple) {
+      const continueConfirmation = await confirm({
+        message: 'Do you want to add more channel',
+        default: true,
       })
-      if (channel_type == 'Youtube') {
-        youtubeChannel = await search({
-          message: 'Search Youtube',
-          source: async (input) => {
-            if (!input) return []
-            return searchYoutube(input, 'channel')
-          },
-        })
+      if (continueConfirmation) {
+        await this.addChannel()
       }
     }
-    if (youtubeChannel?.type == 'channel') {
-      youtubeChannel.id
-      const jpvChannel: JPVChannel = youtubeChannel.toJSON() as unknown as JPVChannel
-      const ch = await this.channelForm(jpvChannel)
-      if (youtubeChannel.id) {
-        ch.targetId = youtubeChannel.id
-      }
-      await db.insert(channel).values({...ch, id: undefined})
-    }
-    const continueConfirmation = await confirm({
-      message: 'Do you want to add more',
-      default: true,
-    })
-    if (continueConfirmation) {
-      await this.addChannel()
-    }
+    return channels;
   }
 
   public async manageChannel() {
@@ -178,9 +270,9 @@ export default class Channel extends Command {
   }
 
   public async run(): Promise<void> {
-    const {args, flags} = await this.parse(Channel)
+    const { args, flags } = await this.parse(Channel)
     if ([flags.add, flags.delete, flags.update, flags.manage].filter(Boolean).length > 1) {
-      this.error('You can only use one of --add, --delete, or --update at a time.', {exit: 1})
+      this.error('You can only use one of --add, --delete, or --update at a time.', { exit: 1 })
     }
 
     if (flags.add) {
@@ -191,6 +283,8 @@ export default class Channel extends Command {
       await this.updateChannel(args)
     } else if (flags.manage) {
       await this.manageChannel()
+    } else if (flags.videos) {
+      await this.addVideos()
     }
     this.exit(0)
   }
