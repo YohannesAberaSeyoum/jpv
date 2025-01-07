@@ -1,8 +1,8 @@
 import { Args, Command, Flags } from '@oclif/core'
-import { jpvFilePath, JpvVideo, jpvLink, jpvVideo, videoTypeEnum } from '../db/schema/jpv.js'
+import { jpvFilePath, JpvVideo, jpvLink, jpvVideo, videoTypeEnum, JpvVideoWithPathLink } from '../db/schema/jpv.js'
 import { input, select, search, confirm } from '@inquirer/prompts'
 import { db } from '../db/setup.js'
-import { eq, ExtractTablesWithRelations } from 'drizzle-orm'
+import { and, eq, ExtractTablesWithRelations } from 'drizzle-orm'
 import chalk from 'chalk'
 import * as fs from 'fs';
 import Link from './link.js'
@@ -56,9 +56,10 @@ export default class Video extends Command {
   timeOut: NodeJS.Timeout | undefined = undefined
   searchVideo = async (
     input: string = "",
+    channel_id?: number
   ): Promise<{
     name: string
-    value: JpvVideo
+    value: JpvVideoWithPathLink
   }[]
   > => {
     return new Promise((resolve, reject) => {
@@ -72,7 +73,7 @@ export default class Video extends Command {
                 filePath: true,
                 link: true
               }
-              , where: (jpvVideo, { ilike }) => ilike(jpvVideo.name, `%${input}%`)
+              , where: (jpvVideo, { ilike }) => channel_id ? and(eq(jpvVideo.channel, channel_id), ilike(jpvVideo.name, `%${input}%`)) : ilike(jpvVideo.name, `%${input}%`)
             }
           )
           resolve(result.map((res) => ({ name: `${res.name}`, value: res })))

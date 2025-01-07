@@ -86,7 +86,8 @@ export default class Channel extends Command {
     return new Promise<void>((resolve) => setTimeout(resolve, ms));
   }
 
-  addVideos = async (channel_id?: string) => {
+  addVideos=async (channel_id?: string) => {
+    let channel = undefined;
     if (!channel_id) {
       const youtube = await search({
         message: 'Search Channel',
@@ -94,16 +95,26 @@ export default class Channel extends Command {
           return this.searchChannel(input)
         },
       })
+      channel = youtube.id;
       channel_id = youtube.targetId!
+    } else {
+      const ch = await YouTube.YouTube.getChannel(channel_id)
+      const existingChannel = await db.query.jpvChannel.findFirst({where: eq(jpvChannel.channelname, ch.channelname!)})
+      if(!existingChannel){
+        const returnChannel = await this.addChannel(ch)
+        channel = returnChannel[0].id
+      } else {
+        channel = existingChannel.id
+      }
     }
     const videos = await YouTube.YouTube.getChannelVideos(channel_id)
     await db.transaction(async (tx) => {
-      await Promise.all(videos.map(async (vid) => {
+      await Promise.all(videos.reverse().map(async (vid) => {
         let createdLink = await tx.query.jpvLink.findMany({ where: eq(jpvLink.url, vid.url) })
         if (!createdLink.length) {
-          createdLink = await tx.insert(jpvLink).values({ name: vid.title!, description: vid.description, url: vid.url }).returning()
+          createdLink = await tx.insert(jpvLink).values({ name: vid.title!, description: vid.description, url: vid.url }).onConflictDoNothing().returning()
         }
-        await tx.insert(jpvVideo).values({ ...vid, id: undefined, link: createdLink[0].id, name: vid.title } as any)
+        await tx.insert(jpvVideo).values({ name: vid.title!, channel: channel, description: vid.description, link: createdLink[0].id, duration: `${vid.lengthSeconds}`, videoType: 'link' }).onConflictDoNothing()
       }));
     })
   }

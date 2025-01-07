@@ -1,5 +1,5 @@
 import { Args, Command, Flags } from '@oclif/core'
-import { JpvPlaylistDetail, jpvPlaylistDetail, playlistDetailTypeEnum, JpvVideo, jpvPlaylist } from '../db/schema/jpv.js'
+import { JpvPlaylistDetail, jpvPlaylistDetail, playlistDetailTypeEnum, JpvVideo, jpvPlaylist, jpvVideo, JpvPlaylist, JpvPlaylistDetailWithPlaylistDetailVideo } from '../db/schema/jpv.js'
 import { input, select, search, confirm } from '@inquirer/prompts'
 import { db } from '../db/setup.js'
 import { and, eq, ilike } from 'drizzle-orm'
@@ -37,9 +37,10 @@ export default class PlaylistDetail extends Command {
   searchPlaylistDetail = async (
     input: string = "",
     optional?: boolean,
+    playlist_id?: number
   ): Promise<{
     name: string
-    value: JpvPlaylistDetail
+    value: JpvPlaylistDetailWithPlaylistDetailVideo
   }[]
   > => {
     return new Promise((resolve, reject) => {
@@ -47,15 +48,12 @@ export default class PlaylistDetail extends Command {
 
       this.timeOut = setTimeout(async () => {
         try {
-          const result = await db
-            .select()
-            .from(jpvPlaylistDetail)
-            .where(ilike(jpvPlaylistDetail.video, `%${input}%`))
-          const pathes = result.map((res) => ({ name: `${res.video}(${res.video})`, value: res }))
+          const result = await db.select().from(jpvPlaylistDetail).leftJoin(jpvPlaylist, eq(jpvPlaylist.id, jpvPlaylistDetail.detailPlaylist)).leftJoin(jpvVideo, eq(jpvPlaylistDetail.video, jpvVideo.id)).where( playlist_id ? (and(ilike(jpvVideo.name, `%${input}%`), eq(jpvPlaylistDetail.playlist, playlist_id))) : ilike(jpvVideo.name, `%${input}%`))        
+          const pathes: {name: string, value: JpvPlaylistDetailWithPlaylistDetailVideo}[] = result.map((res) => ({ name: `${res.video?.name}(${res.playlist?.name})`, value: {...res.playlist_detail, video: res.video, playlist_detail: res.playlist_detail} as JpvPlaylistDetailWithPlaylistDetailVideo}));
           if (optional) {
-            const jpvF: JpvPlaylistDetail = {
+            const jpvF: JpvPlaylistDetailWithPlaylistDetailVideo = {
               playlistDetailType: 'video'
-            } as JpvPlaylistDetail
+            } as JpvPlaylistDetailWithPlaylistDetailVideo
             pathes.push({ name: "", value: jpvF })
           }
           resolve(pathes)

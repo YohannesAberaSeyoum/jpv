@@ -1,5 +1,7 @@
 import { serial, text, pgTable, timestamp, pgEnum, boolean, unique, integer, bigint, AnyPgColumn, numeric } from 'drizzle-orm/pg-core';
 import { relations, type InferSelectModel } from "drizzle-orm"
+import { InferResultType } from './type-utils.js';
+
 
 export const channelTypeEnum = pgEnum('channel_type', ['youtube', 'local']);
 
@@ -20,7 +22,7 @@ export const jpvLinkRelations = relations(jpvLink, ({one}) => ({
     video: one(jpvVideo)
 }))
 
-export type JpvLink = InferSelectModel<typeof jpvLink>
+export type JpvLink = InferResultType<'jpvLink'>
 
 export const jpvChannel = pgTable('channel', {
     ...common,
@@ -36,7 +38,7 @@ export const jpvChannel = pgTable('channel', {
     uniq: unique().on(t.channelType, t.targetId)
 }));
 
-export type JpvChannel = InferSelectModel<typeof jpvChannel>
+export type JpvChannel = InferResultType<'jpvChannel'>
 
 export const jpvFilePath = pgTable('path', {
     ...common,
@@ -51,7 +53,7 @@ export const jpvFilePathRelations = relations(jpvFilePath, ({one}) => ({
     video: one(jpvVideo)
 }))
 
-export type JpvFilePath = InferSelectModel<typeof jpvFilePath>
+export type JpvFilePath = InferResultType<'jpvFilePath'>
 
 export const videoTypeEnum = pgEnum('video_type', ['link', 'local']);
 
@@ -75,7 +77,8 @@ export const jpvVideoRelations = relations(jpvVideo, ({ one }) => ({
     link: one(jpvLink, {fields: [jpvVideo.link], references: [jpvLink.id]}),
 }));
 
-export type JpvVideo = InferSelectModel<typeof jpvVideo> & {filePath: number | JpvFilePath | null} & {link: number | JpvLink | null}
+export type JpvVideo = InferResultType<'jpvVideo'>
+export type JpvVideoWithPathLink = InferResultType<'jpvVideo', {filePath: true, link: true}>
 
 export const playlistTypeEnum = pgEnum('playlist_type', ['link', 'local']);
 
@@ -99,7 +102,7 @@ export const jpvPlaylistRelations = relations(jpvPlaylist, ({ one }) => ({
     playlistChannel: one(jpvChannel, {fields: [jpvPlaylist.channel], references: [jpvChannel.id]})
 }));
 
-export type JpvPlaylist = InferSelectModel<typeof jpvPlaylist>
+export type JpvPlaylist = InferResultType<'jpvPlaylist'>
 
 
 export const playlistDetailTypeEnum = pgEnum('playlist_detail_type', ['video', 'playlist', 'channel']);
@@ -115,7 +118,8 @@ export const jpvPlaylistDetail = pgTable('playlist_detail', {
     uniqOrder: unique().on(t.playlist, t.order)
 }));
 
-export type JpvPlaylistDetail = InferSelectModel<typeof jpvPlaylistDetail>
+export type JpvPlaylistDetail = InferResultType<'jpvPlaylistDetail'>
+export type JpvPlaylistDetailWithPlaylistDetailVideo = InferResultType<'jpvPlaylistDetail', {video: true, detailPlaylist: true, playlist: true}>
 
 export const jpvPlaylistDetailRelations = relations(jpvPlaylistDetail, ({ one }) => ({
     playlist: one(jpvPlaylist, {fields: [jpvPlaylistDetail.playlist], references: [jpvPlaylist.id]}),
@@ -135,7 +139,9 @@ export const videoProgress = pgTable('videoProgress', {
     last_position: numeric('last_position'),
     watch_context: watchContextEnum('watch_context')
 }, (t) => ({
-    uniq: unique().on(t.watch_context, t.video)
+    uniqVideo: unique().on(t.watch_context, t.video),
+    uniqPlaylist: unique().on(t.watch_context, t.playlist),
+    uniqChannel: unique().on(t.watch_context, t.channel)
 }));
 
 export const videoProgressRelations = relations(videoProgress, ({ one }) => ({
@@ -144,7 +150,8 @@ export const videoProgressRelations = relations(videoProgress, ({ one }) => ({
     video: one(jpvVideo, {fields: [videoProgress.video], references: [jpvVideo.id]}),
 }));
 
-export type VideoProgress = InferSelectModel<typeof videoProgress>
+export type VideoProgress = InferResultType<'videoProgress'>
+export type VideoProgressWithVideoPathLink = InferResultType<'videoProgress', {video: {with: {link: true, filePath: true}}}>
 
 export const settingEnum = pgEnum('setting', ['CHANNEL', 'PLAYLIST', 'VIDEO']);
 export const setting = pgTable('videoProgress', {
@@ -166,4 +173,4 @@ export const settingRelations = relations(setting, ({ one }) => ({
     video: one(jpvVideo, {fields: [setting.video], references: [jpvVideo.id]}),
 }));
 
-export type Setting = InferSelectModel<typeof setting>
+export type Setting = InferResultType<'setting'>
