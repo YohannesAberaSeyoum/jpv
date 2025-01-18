@@ -154,7 +154,6 @@ export default class PlaylistDetail extends Command {
     let form: JpvPlaylistDetail = {} as JpvPlaylistDetail;
     if (args && 'playlist_type' in args) {
       if (args.playlist_type == 'video') {
-        console.log(args.video)
         const videos = await this.video.addVideo(args.video, tx, handleMultiple)
         form.playlistDetailType = 'video'
         form.playlist = args.playlist_id || -1
@@ -164,7 +163,9 @@ export default class PlaylistDetail extends Command {
     } else {
       form = await this.playlistDetailForm(jpvPlaylistD)
     }
-    let details = await db.insert(jpvPlaylistDetail).values({ ...form }).onConflictDoNothing().returning()
+    let details = await db.insert(jpvPlaylistDetail).values({ ...form }).onConflictDoUpdate({target: [jpvPlaylistDetail.playlist, jpvPlaylistDetail.video], 
+      set: {order: form.order}
+    }).returning()
     if(!details[0]){
       details = await db.query.jpvPlaylistDetail.findMany({where:  and(eq(jpvPlaylistDetail.playlist, form.playlist!), eq(jpvPlaylistDetail.video, form.video!))});
     }

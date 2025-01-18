@@ -64,6 +64,6 @@ export function sortDirectory(result: string[]){
 }
 
 export async function sortedWalkDirWithMergedArray(dir: string,  extensions: string[]) {
-    const result = await walkDirWithMergedArray(dir, extensions)
+    const result = sortDirectory(await walkDirWithMergedArray(dir, extensions))
     return result;
 }

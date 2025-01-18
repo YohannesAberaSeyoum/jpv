@@ -11,6 +11,33 @@ export const common = {
     updatedAt: timestamp('updated_at').defaultNow().$onUpdate(() => new Date())
 }
 
+export const jpvTutorial = pgTable('tutorial', {
+    ...common,
+    title: text('title').notNull(),
+    playlist: integer('playlist_id').references(() => jpvPlaylist.id),
+    description: text('description'),
+    author: text('author'),
+});
+
+export type JpvTutorial = InferResultType<'jpvTutorial'>
+
+export const jpvProject = pgTable('project', {
+    ...common,
+    title: text('title').notNull(),
+    description: text('description'),
+    filePath: integer('file_id').references(() => jpvFilePath.id),
+});
+
+export type JpvProject = InferResultType<'jpvProject'>
+
+export const jpvTutorialProject = pgTable('tutorial_project', {
+    ...common,
+    tutorial: integer('tutorial_id').references(() => jpvTutorial.id),
+    project: integer('project_id').references(() => jpvProject.id),
+});
+
+export type JpvTutorialProject = InferResultType<'jpvTutorialProject'>
+
 export const jpvLink = pgTable('link', {
     ...common,
     name: text('name').notNull(),
@@ -115,7 +142,8 @@ export const jpvPlaylistDetail = pgTable('playlist_detail', {
     channel: integer('channel_id').references(() => jpvChannel.id),
     order: bigint('order', {mode: 'bigint'}),
 }, (t) => ({
-    uniqOrder: unique().on(t.playlist, t.order)
+    uniqueVideo: unique().on(t.playlist, t.video),
+    uniquePlaylist: unique().on(t.playlist, t.detailPlaylist)
 }));
 
 export type JpvPlaylistDetail = InferResultType<'jpvPlaylistDetail'>

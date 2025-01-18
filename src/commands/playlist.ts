@@ -208,7 +208,7 @@ export default class Playlist extends Command {
       const playlistDetail = await sortedWalkDirWithMergedArray(filePath?.pathUrl!, extension)
       const videoPromises = playlistDetail.map(async(video, idx) => {
         const directory = path.parse(video)
-        await this.playlistDetail.addPlaylistDetail({playlist_type: 'video', video: {title: directory.base, description: '', file_path: video, duration: await this.videoT.getVideoDuration(video)} as any, playlist_id: playlist.id, order: idx, channel: playlist.channel}, tx, false)
+        await this.playlistDetail.addPlaylistDetail({playlist_type: 'video', video: {title: directory.base, description: '', file_path: video, duration: await this.videoT.getVideoDuration(video)} as any, playlist_id: playlist.id, order: idx + 1, channel: playlist.channel}, tx, false)
       })
       await Promise.all(videoPromises)
     }

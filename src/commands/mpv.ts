@@ -75,7 +75,7 @@ export default class Mpv extends Command {
   }
 
   async keyboardControlMpv() {
-    this.showControls()
+    // this.showControls()
 
     process.stdin.setRawMode(true);
     process.stdin.resume();
@@ -347,12 +347,38 @@ export default class Mpv extends Command {
     if(!this.currentVideo?.createdAt){
       return;
     }
-    let equal;
-    if (this.watch_context === 'VIDEO') {
-      await this.savePositionProgress()
-      return;
-    }
     let prevVideo;
+    if (this.watch_context === 'VIDEO') {
+      if(this.mixPlaylist.length){
+        const i = this.mixPlaylist.findIndex((playlist) => playlist.url == this.currentYoutubeVideo?.url)
+        this.currentYoutubeVideo = this.mixPlaylist[i - 1]
+        if(this.currentYoutubeVideo){
+          if(this.mpvPlayer.stopped){
+            await this.mpvPlayer.start()
+          }
+          await this.mpvPlayer.load(this.currentYoutubeVideo.url);
+          await this.keyboardControlMpv()
+          await this.displayAudioInfo()
+          return;
+        } else {
+          process.exit(0)
+        }
+      } else {
+        const restart_confirm = await confirm({
+          message: 'You have finished the channel, Do you want to restart',
+        })
+        if(!restart_confirm){
+          await this.savePositionProgress()
+          process.exit(0)
+        } else if(this.currentVideo) {
+          prevVideo = this.currentVideo
+        } else {
+          await this.mpvPlayer.load(this.currentYoutubeVideo?.url);
+          await this.keyboardControlMpv()
+          await this.displayAudioInfo()
+        }
+      }
+    }
     if (this.watch_context === 'CHANNEL') {
       prevVideo = await db.query.jpvVideo.findFirst({
         where: and(eq(jpvVideo.channel, this.currentChannel?.id!), lt(jpvVideo.id, this.currentVideo.id)),
@@ -424,17 +450,28 @@ export default class Mpv extends Command {
 
   private async setAudioOnly(audioOnly: boolean) {
     await this.mpvPlayer.setProperty('vid', audioOnly ? 'no' : 'auto');
-    if(this.currentVideo?.videoType == 'link' && !audioOnly){
+    if((this.currentYoutubeVideo || this.currentVideo?.videoType == 'link') && !audioOnly){
       await this.reloadPlayback(audioOnly)
     }
   }
 
   async reloadPlayback(audioOnly: boolean) {
+    this.isSearching = true
     const currentTime = await this.mpvPlayer.getProperty('time-pos'); // Get current position
     await this.mpvPlayer.stop(); // Stop the video
     await this.mpvPlayer.setProperty('vid', audioOnly ? 'no' : 'auto'); // Set vid property
-    await this.mpvPlayer.load((this.currentVideo?.link as JpvLink).url); // Reload video
-    await this.mpvPlayer.seek(currentTime); // Resume at the same position
+    if(this.mpvPlayer.stopped){
+      await this.mpvPlayer.start()
+    }
+    if(this.currentVideo){
+      await this.mpvPlayer.load((this.currentVideo?.link as JpvLink).url); // Reload video
+    }
+    if(this.currentYoutubeVideo){
+      await this.mpvPlayer.load(this.currentYoutubeVideo.url); // Reload video
+    }
+    setTimeout(async () => await this.mpvPlayer.seek(+currentTime))
+    // console.log(currentTime)
+    this.isSearching = false
 }
 
   async displayProgress() {
@@ -580,6 +617,7 @@ export default class Mpv extends Command {
         }
         await this.mpvPlayer.start()
         await this.mpvPlayer.load(args.url)
+        await this.displayAudioInfo()
         this.startRealTimeProgress();
         // await this.controlMpv()
         await this.keyboardControlMpv()
@@ -764,8 +802,9 @@ export default class Mpv extends Command {
 
     this.mpvPlayer.on('stopped', async () => {
       try {
-      await this.playNext()
-        
+        if(!this.isSearching){
+          await this.playNext()
+        }        
       } catch (error) {
       }
     });
